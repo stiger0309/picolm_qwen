@@ -68,7 +68,7 @@ static char *read_stdin(void) {
 
 void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler,
                    encode_ptr tokenizer_encoder, decode_ptr tokenizer_decoder,
-                   int is_qwen_model) {
+                   int is_qwen_model, int is_tinyllama_model) {
     int pos = 0;
     int next_token;
     char input_buf[2048];
@@ -79,7 +79,9 @@ void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler,
 
     const char* system_prompt = is_qwen_model
         ? "<|im_start|>system\nYou are Qwen, a helpful assistant.<|im_end|>\n"
-        : "You are a helpful assistant.\n";
+        : (is_tinyllama_model
+            ? "<|system|>\nYou are a helpful assistant.</s>\n"
+            : "You are a helpful assistant.\n");
     int initial_tokens[128];
     int n_system = tokenizer_encoder(tokenizer, system_prompt, initial_tokens, 128, 1);
     for (int i = 0; i < n_system; i++) {
@@ -108,6 +110,9 @@ void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler,
         if (is_qwen_model) {
             snprintf(formatted_input, sizeof(formatted_input),
                      "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", input_buf);
+        } else if (is_tinyllama_model) {
+            snprintf(formatted_input, sizeof(formatted_input),
+                     "<|user|>\n%s</s>\n<|assistant|>", input_buf);
         } else {
             snprintf(formatted_input, sizeof(formatted_input), "User: %s\nAssistant:", input_buf);
         }
@@ -270,6 +275,7 @@ int main(int argc, char **argv) {
     encode_ptr tokenizer_encoder = NULL;
     decode_ptr tokenizer_decoder = NULL;
     int is_qwen_model = 0;
+    int is_tinyllama_model = 0;
     if(strstr(model_path, "wen") != NULL) {// crude check for "qwen" in model name to select tokenizer
         tokenizer_encoder = tokenizer_encode_qwen;
         tokenizer_decoder = tokenizer_decode_qwen;
@@ -281,12 +287,16 @@ int main(int argc, char **argv) {
         model.rope = rope_llama;
     }
 
+    if (strstr(model_path, "tinyllama") != NULL || strstr(model_path, "TinyLlama") != NULL) {
+        is_tinyllama_model = 1;
+    }
+
     /* Init sampler */
     sampler_t sampler;
     sampler_init(&sampler, temperature, top_p, seed);
 
     if (chat_mode) {
-        run_chat_mode(&model, &tokenizer, &sampler, tokenizer_encoder, tokenizer_decoder, is_qwen_model);
+        run_chat_mode(&model, &tokenizer, &sampler, tokenizer_encoder, tokenizer_decoder, is_qwen_model, is_tinyllama_model);
         fprintf(stderr, "Memory: %.2f MB runtime state (FP16 KV cache)\n",
                 (double)model.state.mem_size / (1024.0 * 1024.0));
         model_free(&model);
