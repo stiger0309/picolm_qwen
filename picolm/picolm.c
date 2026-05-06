@@ -287,6 +287,8 @@ int main(int argc, char **argv) {
 
     if (chat_mode) {
         run_chat_mode(&model, &tokenizer, &sampler, tokenizer_encoder, tokenizer_decoder, is_qwen_model);
+        fprintf(stderr, "Memory: %.2f MB runtime state (FP16 KV cache)\n",
+                (double)model.state.mem_size / (1024.0 * 1024.0));
         model_free(&model);
         tokenizer_free(&tokenizer);
         free(stdin_prompt);
