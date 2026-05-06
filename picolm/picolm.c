@@ -39,6 +39,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -j <int>       Number of threads (default: 4)\n");
     fprintf(stderr, "\nAdvanced options:\n");
     fprintf(stderr, "  --json         Grammar-constrained JSON output mode\n");
+    fprintf(stderr, "  --chat         Interactive chat mode (no -p required)\n");
     fprintf(stderr, "  --cache <file> KV cache file (saves/loads prompt state)\n");
 }
 
@@ -65,25 +66,22 @@ static char *read_stdin(void) {
 #include <stdlib.h>
 #include <string.h>
 
-// 假设这些函数已经在你的 main.c 或头文件中声明
-// float *model_forward(model_t *m, int token, int pos);
-// int sampler_sample(sampler_t *s, float *logits, int vocab_size);
-// const char *tokenizer_decode_qwen(const tokenizer_t *t, int prev_token, int token);
-// int tokenizer_encode_qwen(const tokenizer_t *t, const char *text, int *tokens, int max_tokens, int add_bos);
-
-void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler) {
+void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler,
+                   encode_ptr tokenizer_encoder, decode_ptr tokenizer_decoder,
+                   int is_qwen_model) {
     int pos = 0;
     int next_token;
     char input_buf[2048];
     int max_context = model->config.max_seq_len;
 
-    printf("\n--- Entering Chat Mode (Qwen 3) ---\n");
+    printf("\n--- Entering Chat Mode ---\n");
     printf("Type 'exit' to quit, 'clear' to reset context.\n\n");
 
-    // 可选：添加 System Prompt 初始化
-    const char* system_prompt = "<|im_start|>system\nYou are Qwen, a helpful assistant.<|im_end|>\n";
+    const char* system_prompt = is_qwen_model
+        ? "<|im_start|>system\nYou are Qwen, a helpful assistant.<|im_end|>\n"
+        : "You are a helpful assistant.\n";
     int initial_tokens[128];
-    int n_system = tokenizer_encode_qwen(tokenizer, system_prompt, initial_tokens, 128, 1);
+    int n_system = tokenizer_encoder(tokenizer, system_prompt, initial_tokens, 128, 1);
     for (int i = 0; i < n_system; i++) {
         model_forward(model, initial_tokens[i], pos++);
     }
@@ -99,19 +97,34 @@ void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler) {
             pos = 0;
             printf("\n[Context Cleared]\n\n");
             // 重新添加 System Prompt
-            n_system = tokenizer_encode_qwen(tokenizer, system_prompt, initial_tokens, 128, 1);
+            n_system = tokenizer_encoder(tokenizer, system_prompt, initial_tokens, 128, 1);
             for (int i = 0; i < n_system; i++) model_forward(model, initial_tokens[i], pos++);
             continue;
         }
 
         // 1. 构造本轮 User 输入的 ChatML 格式
         char formatted_input[2560];
-        snprintf(formatted_input, sizeof(formatted_input), "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", input_buf);
+        if (is_qwen_model) {
+            snprintf(formatted_input, sizeof(formatted_input),
+                     "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", input_buf);
+        } else {
+            snprintf(formatted_input, sizeof(formatted_input), "User: %s\nAssistant:", input_buf);
+        }
 
         // 2. 编码本轮 Prompt
-        int *prompt_tokens = malloc(sizeof(int) * strlen(formatted_input));
+        int max_prompt_tokens = (int)strlen(formatted_input) + 8;
+        int *prompt_tokens = malloc((size_t)max_prompt_tokens * sizeof(int));
+        if (!prompt_tokens) {
+            fprintf(stderr, "Out of memory in chat mode\n");
+            break;
+        }
         // 注意：追加对话时不添加 BOS (add_bos = 0)
-        int n_prompt = tokenizer_encode_qwen(tokenizer, formatted_input, prompt_tokens, (int)strlen(formatted_input), 0);
+        int n_prompt = tokenizer_encoder(tokenizer, formatted_input, prompt_tokens, max_prompt_tokens, 0);
+        if (n_prompt <= 0) {
+            free(prompt_tokens);
+            fprintf(stderr, "Failed to encode chat input\n");
+            break;
+        }
 
         // 3. Prefill 阶段：喂入 User Prompt 并更新 KV Cache
         // 我们处理到倒数第二个 token，最后一个用于触发生成
@@ -140,13 +153,13 @@ void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler) {
             pos++;
 
             // 检查停止词：Qwen 3 的 <|im_end|> 是 151645
-            if (next_token == tokenizer->eos_id || next_token == 151645) {
+            if (next_token == (int)tokenizer->eos_id || (is_qwen_model && next_token == 151645)) {
                 printf("\n");
                 break;
             }
 
             // 解码并实时打印
-            const char *piece = tokenizer_decode_qwen(tokenizer, current_token, next_token);
+            const char *piece = tokenizer_decoder(tokenizer, current_token, next_token);
             printf("%s", piece);
             fflush(stdout);
 
@@ -212,7 +225,7 @@ int main(int argc, char **argv) {
 
     /* Read prompt from stdin if not provided via -p */
     char *stdin_prompt = NULL;
-    if (!prompt) {
+    if (!chat_mode && !prompt) {
 #ifdef _WIN32
         HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
         DWORD mode;
@@ -228,7 +241,7 @@ int main(int argc, char **argv) {
 #endif
     }
 
-    if (!prompt || !*prompt) {
+    if (!chat_mode && (!prompt || !*prompt)) {
         fprintf(stderr, "No prompt provided. Use -p or pipe via stdin.\n");
         usage(argv[0]);
         return 1;
@@ -252,9 +265,32 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Select tokenizer/rope variant */
+    encode_ptr tokenizer_encoder = NULL;
+    decode_ptr tokenizer_decoder = NULL;
+    int is_qwen_model = 0;
+    if(strstr(model_path, "wen") != NULL) {// crude check for "qwen" in model name to select tokenizer
+        tokenizer_encoder = tokenizer_encode_qwen;
+        tokenizer_decoder = tokenizer_decode_qwen;
+        model.rope = rope_qwen;
+        is_qwen_model = 1;
+    } else {
+        tokenizer_encoder = tokenizer_encode_llama;
+        tokenizer_decoder = tokenizer_decode_llama;
+        model.rope = rope_llama;
+    }
+
     /* Init sampler */
     sampler_t sampler;
     sampler_init(&sampler, temperature, top_p, seed);
+
+    if (chat_mode) {
+        run_chat_mode(&model, &tokenizer, &sampler, tokenizer_encoder, tokenizer_decoder, is_qwen_model);
+        model_free(&model);
+        tokenizer_free(&tokenizer);
+        free(stdin_prompt);
+        return 0;
+    }
 
     /* Init grammar constraint */
     grammar_state_t grammar;
@@ -270,17 +306,6 @@ int main(int argc, char **argv) {
     }
 
     /* Encode prompt */
-    encode_ptr tokenizer_encoder = NULL;
-    decode_ptr tokenizer_decoder = NULL;
-    if(strstr(model_path, "wen") != NULL) {// crude check for "qwen" in model name to select tokenizer
-        tokenizer_encoder = tokenizer_encode_qwen;
-        tokenizer_decoder = tokenizer_decode_qwen;
-        model.rope = rope_qwen;
-    } else {
-        tokenizer_encoder = tokenizer_encode_llama;
-        tokenizer_decoder = tokenizer_decode_llama;
-        model.rope = rope_llama;
-    }
     int max_prompt_tokens = (int)strlen(prompt) + 3;
     int *prompt_tokens = (int *)malloc((size_t)max_prompt_tokens * sizeof(int));
     int n_prompt = tokenizer_encoder(&tokenizer, prompt, prompt_tokens, max_prompt_tokens, 1);
@@ -295,14 +320,6 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Prompt: %d tokens, generating up to %d (temp=%.2f, top_p=%.2f, threads=%d)\n",
             n_prompt, max_tokens, temperature, top_p, num_threads);
     fprintf(stderr, "---\n");
-    if(chat_mode) {
-        run_chat_mode(&model, &tokenizer, &sampler);
-        model_free(&model);
-        tokenizer_free(&tokenizer);
-        grammar_free(&grammar);
-        free(stdin_prompt);
-        return 0;
-    }
     /* Generation loop */
     int total_gen = 0;
     double t_start = get_time_ms();

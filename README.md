@@ -270,6 +270,7 @@ Generation options:
 
 Advanced options:
   --json         Grammar-constrained JSON output mode
+  --chat         Interactive chat mode (no -p required)
   --cache <file> KV cache file (saves/loads prompt state)
 ```
 
@@ -306,6 +307,12 @@ Return the current time as JSON.</s>
 **Pipe from stdin:**
 ```bash
 echo "Explain quantum computing in one sentence" | ./picolm model.gguf -n 50
+```
+
+**Interactive chat mode (no `-p` needed):**
+```bash
+./picolm model.gguf --chat -t 0.7 -j 4
+# Type: exit (quit), clear (reset context)
 ```
 
 **KV cache — skip repeated prefill:**
