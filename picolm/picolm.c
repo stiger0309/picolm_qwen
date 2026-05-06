@@ -63,6 +63,12 @@ static void print_memory_report(const model_t *model, const tokenizer_t *tokeniz
             (double)tracked_total / (1024.0 * 1024.0));
     fprintf(stderr, "  runtime state: %.2f MB\n", (double)runtime_bytes / (1024.0 * 1024.0));
     fprintf(stderr, "  KV cache: %.2f MB\n", (double)kv_bytes / (1024.0 * 1024.0));
+    fprintf(stderr,
+            "  KV cache calc: %d layers * %d seq * %d kv_heads * %d head_dim * 2 (K/V) * %zu bytes = %zu bytes (%.2f MB)\n",
+            model->config.n_layers, model->config.max_seq_len,
+            model->config.n_kv_heads, model->config.head_dim,
+            sizeof(uint16_t), kv_bytes,
+            (double)kv_bytes / (1024.0 * 1024.0));
     fprintf(stderr, "  tokenizer: %.2f MB\n", (double)tok_bytes / (1024.0 * 1024.0));
     fprintf(stderr, "    tokenizer vocab strings: %.2f MB\n",
             (double)tokenizer->mem_vocab_strings / (1024.0 * 1024.0));
@@ -85,12 +91,6 @@ static void print_memory_report(const model_t *model, const tokenizer_t *tokeniz
     fprintf(stderr, "  VMS (virtual): %.2f MB\n", (double)vms_bytes / (1024.0 * 1024.0));
 #endif
 
-    fprintf(stderr,
-            "  KV calc: %d layers * %d seq * %d kv_heads * %d head_dim * 2 (K/V) * %zu bytes = %zu bytes (%.2f MB)\n",
-            model->config.n_layers, model->config.max_seq_len,
-            model->config.n_kv_heads, model->config.head_dim,
-            sizeof(uint16_t), kv_bytes,
-            (double)kv_bytes / (1024.0 * 1024.0));
 }
 
 static void usage(const char *prog) {
