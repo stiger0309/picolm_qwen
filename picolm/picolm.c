@@ -26,6 +26,73 @@ static double get_time_ms(void) {
 }
 #endif
 
+static void read_process_memory_bytes(size_t *rss_bytes, size_t *vms_bytes) {
+    if (rss_bytes) *rss_bytes = 0;
+    if (vms_bytes) *vms_bytes = 0;
+
+#ifndef _WIN32
+    FILE *fp = fopen("/proc/self/status", "r");
+    if (!fp) return;
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        size_t kb = 0;
+        if (sscanf(line, "VmRSS: %zu kB", &kb) == 1) {
+            if (rss_bytes) *rss_bytes = kb * 1024;
+            continue;
+        }
+        if (sscanf(line, "VmSize: %zu kB", &kb) == 1) {
+            if (vms_bytes) *vms_bytes = kb * 1024;
+            continue;
+        }
+    }
+    fclose(fp);
+#endif
+}
+
+static void print_memory_report(const model_t *model, const tokenizer_t *tokenizer,
+                                size_t prompt_tokens_bytes, size_t stdin_prompt_bytes) {
+    size_t runtime_bytes = model->state.mem_size;
+    size_t kv_bytes = model->state.kv_size;
+    size_t tok_bytes = tokenizer_memory_bytes(tokenizer);
+    size_t tracked_total = runtime_bytes + kv_bytes + tok_bytes + prompt_tokens_bytes + stdin_prompt_bytes;
+    size_t rss_bytes = 0, vms_bytes = 0;
+    read_process_memory_bytes(&rss_bytes, &vms_bytes);
+
+    fprintf(stderr, "Memory breakdown (tracked total: %.2f MB):\n",
+            (double)tracked_total / (1024.0 * 1024.0));
+    fprintf(stderr, "  runtime state: %.2f MB\n", (double)runtime_bytes / (1024.0 * 1024.0));
+    fprintf(stderr, "  KV cache: %.2f MB\n", (double)kv_bytes / (1024.0 * 1024.0));
+    fprintf(stderr, "  tokenizer: %.2f MB\n", (double)tok_bytes / (1024.0 * 1024.0));
+    fprintf(stderr, "    tokenizer vocab strings: %.2f MB\n",
+            (double)tokenizer->mem_vocab_strings / (1024.0 * 1024.0));
+    fprintf(stderr, "    tokenizer vocab pointer table: %.2f MB\n",
+            (double)tokenizer->mem_vocab_ptrs / (1024.0 * 1024.0));
+    fprintf(stderr, "    tokenizer scores: %.2f MB\n",
+            (double)tokenizer->mem_scores / (1024.0 * 1024.0));
+    fprintf(stderr, "    tokenizer sorted index: %.2f MB\n",
+            (double)tokenizer->mem_sorted_idx / (1024.0 * 1024.0));
+    fprintf(stderr, "  prompt token buffer: %.2f MB\n",
+            (double)prompt_tokens_bytes / (1024.0 * 1024.0));
+    fprintf(stderr, "  stdin prompt buffer: %.2f MB\n",
+            (double)stdin_prompt_bytes / (1024.0 * 1024.0));
+    fprintf(stderr, "model mmap (virtual): %.2f MB\n",
+            (double)model->mmap_size / (1024.0 * 1024.0));
+
+#ifndef _WIN32
+    fprintf(stderr, "Process memory (OS-level):\n");
+    fprintf(stderr, "  RSS (resident): %.2f MB\n", (double)rss_bytes / (1024.0 * 1024.0));
+    fprintf(stderr, "  VMS (virtual): %.2f MB\n", (double)vms_bytes / (1024.0 * 1024.0));
+#endif
+
+    fprintf(stderr,
+            "  KV calc: %d layers * %d seq * %d kv_heads * %d head_dim * 2 (K/V) * %zu bytes = %zu bytes (%.2f MB)\n",
+            model->config.n_layers, model->config.max_seq_len,
+            model->config.n_kv_heads, model->config.head_dim,
+            sizeof(uint16_t), kv_bytes,
+            (double)kv_bytes / (1024.0 * 1024.0));
+}
+
 static void usage(const char *prog) {
     fprintf(stderr, "PicoLLM — ultra-lightweight LLM inference engine\n\n");
     fprintf(stderr, "Usage: %s <model.gguf> [options]\n", prog);
@@ -297,8 +364,7 @@ int main(int argc, char **argv) {
 
     if (chat_mode) {
         run_chat_mode(&model, &tokenizer, &sampler, tokenizer_encoder, tokenizer_decoder, is_qwen_model, is_tinyllama_model);
-        fprintf(stderr, "Memory: %.2f MB runtime state (FP16 KV cache)\n",
-                (double)model.state.mem_size / (1024.0 * 1024.0));
+        print_memory_report(&model, &tokenizer, 0, stdin_prompt ? strlen(stdin_prompt) + 1 : 0);
         model_free(&model);
         tokenizer_free(&tokenizer);
         free(stdin_prompt);
@@ -414,8 +480,9 @@ int main(int argc, char **argv) {
             total_gen, gen_time,
             gen_time > 0 ? (double)total_gen / gen_time : 0);
     fprintf(stderr, "Total: %.4fs\n", total_time);
-    fprintf(stderr, "Memory: %.2f MB runtime state (FP16 KV cache)\n",
-            (double)model.state.mem_size / (1024.0 * 1024.0));
+    print_memory_report(&model, &tokenizer,
+                        (size_t)max_prompt_tokens * sizeof(int),
+                        stdin_prompt ? strlen(stdin_prompt) + 1 : 0);
 
     /* Cleanup */
     grammar_free(&grammar);

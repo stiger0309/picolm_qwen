@@ -11,6 +11,11 @@ typedef struct {
     int    *sorted_idx;  /* indices sorted by vocab string for binary search */
     uint32_t bos_id;
     uint32_t eos_id;
+    size_t mem_vocab_ptrs;
+    size_t mem_scores;
+    size_t mem_sorted_idx;
+    size_t mem_vocab_strings;
+    size_t mem_total;
 } tokenizer_t;
 typedef int (*encode_ptr)(const tokenizer_t *, const char *, int *, int, int);
 typedef const char *(*decode_ptr)(const tokenizer_t *t, int prev_token, int token);
@@ -30,5 +35,6 @@ const char *tokenizer_decode_llama(const tokenizer_t *t, int prev_token, int tok
 const char *tokenizer_decode_qwen(const tokenizer_t *t, int prev_token, int token);
 /* Free tokenizer resources */
 void tokenizer_free(tokenizer_t *t);
+size_t tokenizer_memory_bytes(const tokenizer_t *t);
 
 #endif /* TOKENIZER_H */

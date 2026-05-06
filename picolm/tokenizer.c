@@ -135,10 +135,14 @@ static int utf8_next_cp(const char *s, int len, int *i, uint32_t *cp_out) {
 /* ---- Public API ---- */
 
 int tokenizer_load(tokenizer_t *t, const model_t *m) {
+    memset(t, 0, sizeof(*t));
     int vs = m->config.vocab_size;
     t->vocab_size = vs;
     t->bos_id = m->tok_bos_id;
     t->eos_id = m->tok_eos_id;
+    t->mem_vocab_ptrs = (size_t)vs * sizeof(char *);
+    t->mem_scores = (size_t)vs * sizeof(float);
+    t->mem_sorted_idx = (size_t)vs * sizeof(int);
 
     /* Allocate vocab and scores arrays */
     t->vocab = (char **)calloc((size_t)vs, sizeof(char *));
@@ -162,6 +166,7 @@ int tokenizer_load(tokenizer_t *t, const model_t *m) {
             if (t->vocab[i]) {
                 memcpy(t->vocab[i], p, (size_t)slen);
                 t->vocab[i][slen] = '\0';
+                t->mem_vocab_strings += (size_t)slen + 1;
             }
             p += slen;
         }
@@ -171,6 +176,9 @@ int tokenizer_load(tokenizer_t *t, const model_t *m) {
     for (int i = 0; i < vs; i++) {
         if (!t->vocab[i]) {
             t->vocab[i] = (char *)calloc(1, 1);
+            if (t->vocab[i]) {
+                t->mem_vocab_strings += 1;
+            }
         }
     }
 
@@ -187,6 +195,7 @@ int tokenizer_load(tokenizer_t *t, const model_t *m) {
     }
     g_vocab_for_sort = t->vocab;
     qsort(t->sorted_idx, (size_t)vs, sizeof(int), cmp_sorted);
+    t->mem_total = t->mem_vocab_ptrs + t->mem_scores + t->mem_sorted_idx + t->mem_vocab_strings;
 
     fprintf(stderr, "Tokenizer loaded: %d tokens, bos=%u, eos=%u\n",
             vs, t->bos_id, t->eos_id);
@@ -655,4 +664,13 @@ void tokenizer_free(tokenizer_t *t) {
     t->scores = NULL;
     free(t->sorted_idx);
     t->sorted_idx = NULL;
+    t->mem_vocab_ptrs = 0;
+    t->mem_scores = 0;
+    t->mem_sorted_idx = 0;
+    t->mem_vocab_strings = 0;
+    t->mem_total = 0;
+}
+
+size_t tokenizer_memory_bytes(const tokenizer_t *t) {
+    return t ? t->mem_total : 0;
 }
