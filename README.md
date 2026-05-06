@@ -525,6 +525,8 @@ PicoLM supports any LLaMA-architecture model in GGUF format:
 | Model | Parameters | GGUF Size (Q4_K_M) | RAM Needed |
 |-------|-----------|---------------------|------------|
 | **TinyLlama 1.1B** | 1.1B | 638 MB | ~45 MB |
+| **Qwen2.5 1.5B Instruct** | 1.5B | ~0.9 GB | ~60 MB |
+| **Qwen3 1.7B** | 1.7B | ~1.0 GB | ~65 MB |
 | **Llama 2 7B** | 7B | 4.1 GB | ~200 MB |
 | **Phi-2** | 2.7B | 1.6 GB | ~90 MB |
 
@@ -556,6 +558,8 @@ PicoLM/
 │   └── build.bat          ← Windows MSVC build script
 │
 └── tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf  ← model file (638 MB, not in git)
+└── qwen2.5-1.5b-instruct-q4_k_m.gguf
+└── Qwen3-1.7B.Q4_K_M.gguf
 ```
 
 **Total C source: ~2,500 lines.** That's the entire inference engine — GGUF parsing, mmap, dequantization, matrix math, attention, tokenization, sampling, and grammar constraints.
