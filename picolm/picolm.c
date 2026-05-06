@@ -75,7 +75,7 @@ void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler,
     int max_context = model->config.max_seq_len;
 
     printf("\n--- Entering Chat Mode ---\n");
-    printf("Type 'exit' to quit, 'clear' to reset context.\n\n");
+    printf("Type 'exit' to quit, 'clear' to reset context, or press Enter on an empty line to quit.\n\n");
 
     const char* system_prompt = is_qwen_model
         ? "<|im_start|>system\nYou are Qwen, a helpful assistant.<|im_end|>\n"
@@ -92,6 +92,7 @@ void run_chat_mode(model_t *model, tokenizer_t *tokenizer, sampler_t *sampler,
 
         // 处理特殊命令
         input_buf[strcspn(input_buf, "\n")] = 0; // 移除换行符
+        if (input_buf[0] == '\0') break;
         if (strcmp(input_buf, "exit") == 0) break;
         if (strcmp(input_buf, "clear") == 0) {
             pos = 0;

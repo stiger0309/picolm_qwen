@@ -312,7 +312,7 @@ echo "Explain quantum computing in one sentence" | ./picolm model.gguf -n 50
 **Interactive chat mode (no `-p` needed):**
 ```bash
 ./picolm model.gguf --chat -t 0.7 -j 4
-# Type: exit (quit), clear (reset context)
+# Type: exit (quit), clear (reset context), or press Enter on an empty line (quit)
 ```
 
 **KV cache — skip repeated prefill:**
