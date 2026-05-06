@@ -339,19 +339,20 @@ int main(int argc, char **argv) {
             grammar_apply(&grammar, logits, model.config.vocab_size);
             next = sampler_sample(&sampler, logits, model.config.vocab_size);
 
+            /* Qwen chat stop token: <|im_end|> */
+            if (next == (int)tokenizer.eos_id || next == 151645) break;
+
             /* Update grammar state with the generated token */
             grammar_advance(&grammar, &tokenizer, next);
 
             /* Decode and print */
             const char *piece = tokenizer_decoder(&tokenizer, token, next);
-            printf("[%d]", next);
             printf("%s", piece);
             fflush(stdout);
 
             total_gen++;
 
-            /* Stop on EOS or grammar completion */
-            if (next == (int)tokenizer.eos_id) break;
+            /* Stop on grammar completion */
             if (grammar_is_complete(&grammar)) break;
         }
 
